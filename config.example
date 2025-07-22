@@ -1,0 +1,14 @@
+# Gufermart Loyalty System Configuration
+
+# Database Configuration
+DATABASE_URL=postgres://user:password@localhost:5432/gofemart?sslmode=disable
+
+# Server Configuration
+SERVER_ADDRESS=:8080
+
+# JWT Secret (change this in production!)
+JWT_SECRET=your-very-secure-secret-key-change-this-in-production-256-bits-long
+
+# Optional: External Loyalty Service Configuration
+# LOYALTY_SERVICE_URL=https://api.loyalty-service.com
+# LOYALTY_SERVICE_TOKEN=your-service-token 
