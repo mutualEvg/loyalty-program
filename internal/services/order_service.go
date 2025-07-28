@@ -89,6 +89,11 @@ func (s *OrderService) GetUserOrders(userID int) ([]*models.OrderResponse, error
 		orders = append(orders, &order)
 	}
 
+	// Check for errors during iteration
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate over orders: %w", err)
+	}
+
 	return orders, nil
 }
 
