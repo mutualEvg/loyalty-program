@@ -95,5 +95,10 @@ func (s *WithdrawalService) GetUserWithdrawals(userID int) ([]*models.Withdrawal
 		withdrawals = append(withdrawals, &withdrawal)
 	}
 
+	// Check for errors during iteration
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate over withdrawals: %w", err)
+	}
+
 	return withdrawals, nil
 }
