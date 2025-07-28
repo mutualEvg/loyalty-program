@@ -2,8 +2,10 @@ package services
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"gofemart/internal/database"
@@ -12,11 +14,23 @@ import (
 )
 
 type OrderService struct {
-	db *database.DB
+	db                *database.DB
+	accrualSystemAddr string
+}
+
+type AccrualResponse struct {
+	Order   string  `json:"order"`
+	Status  string  `json:"status"`
+	Accrual float64 `json:"accrual,omitempty"`
 }
 
 func NewOrderService(db *database.DB) *OrderService {
 	return &OrderService{db: db}
+}
+
+// SetAccrualSystemAddress configures the external accrual system address
+func (s *OrderService) SetAccrualSystemAddress(addr string) {
+	s.accrualSystemAddr = addr
 }
 
 // SubmitOrder submits a new order for processing
@@ -47,7 +61,7 @@ func (s *OrderService) SubmitOrder(userID int, orderNumber string) error {
 		return fmt.Errorf("failed to create order: %w", err)
 	}
 
-	// Start processing order asynchronously (simulate external service call)
+	// Start processing order asynchronously
 	go s.processOrderAsync(orderNumber)
 
 	return nil
@@ -78,7 +92,7 @@ func (s *OrderService) GetUserOrders(userID int) ([]*models.OrderResponse, error
 	return orders, nil
 }
 
-// processOrderAsync simulates external loyalty system processing
+// processOrderAsync handles order processing with external accrual system or mock
 func (s *OrderService) processOrderAsync(orderNumber string) {
 	// Update status to PROCESSING
 	s.db.Exec("UPDATE orders SET status = $1, updated_at = $2 WHERE number = $3",
@@ -87,8 +101,16 @@ func (s *OrderService) processOrderAsync(orderNumber string) {
 	// Simulate processing time
 	time.Sleep(2 * time.Second)
 
-	// Simulate loyalty calculation result (mock external service)
-	accrual, status := s.simulateLoyaltyCalculation(orderNumber)
+	var accrual float64
+	var status models.OrderStatus
+
+	if s.accrualSystemAddr != "" {
+		// Use real accrual system
+		accrual, status = s.queryAccrualSystem(orderNumber)
+	} else {
+		// Use mock implementation
+		accrual, status = s.simulateLoyaltyCalculation(orderNumber)
+	}
 
 	// Update order with result
 	if accrual > 0 {
@@ -111,6 +133,53 @@ func (s *OrderService) processOrderAsync(orderNumber string) {
 			SET status = $1, updated_at = $2 
 			WHERE number = $3`,
 			status, time.Now(), orderNumber)
+	}
+}
+
+// queryAccrualSystem queries the external accrual system
+func (s *OrderService) queryAccrualSystem(orderNumber string) (float64, models.OrderStatus) {
+	url := fmt.Sprintf("%s/api/orders/%s", s.accrualSystemAddr, orderNumber)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		// If accrual system is unavailable, mark as processing
+		return 0, models.OrderStatusProcessing
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var accrualResp AccrualResponse
+		if err := json.NewDecoder(resp.Body).Decode(&accrualResp); err != nil {
+			return 0, models.OrderStatusProcessing
+		}
+
+		// Map accrual system statuses to our statuses
+		switch accrualResp.Status {
+		case "REGISTERED":
+			return 0, models.OrderStatusNew
+		case "PROCESSING":
+			return 0, models.OrderStatusProcessing
+		case "INVALID":
+			return 0, models.OrderStatusInvalid
+		case "PROCESSED":
+			return accrualResp.Accrual, models.OrderStatusProcessed
+		default:
+			return 0, models.OrderStatusProcessing
+		}
+
+	case http.StatusNoContent:
+		// Order not registered in accrual system, mark as invalid
+		return 0, models.OrderStatusInvalid
+
+	case http.StatusTooManyRequests:
+		// Rate limited, retry later
+		time.Sleep(60 * time.Second)
+		return s.queryAccrualSystem(orderNumber)
+
+	default:
+		// Unknown error, keep processing
+		return 0, models.OrderStatusProcessing
 	}
 }
 
