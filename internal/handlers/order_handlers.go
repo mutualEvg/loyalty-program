@@ -58,15 +58,13 @@ func (h *OrderHandlers) SubmitOrder(w http.ResponseWriter, r *http.Request) {
 		case "invalid order number format":
 			http.Error(w, "Invalid order number format", http.StatusUnprocessableEntity)
 			return
+		case "order already uploaded by this user":
+			w.WriteHeader(http.StatusOK) // 200 - already uploaded by this user
+			return
 		case "order already uploaded by another user":
 			http.Error(w, "Order already uploaded by another user", http.StatusConflict)
 			return
 		default:
-			if err.Error() == "" {
-				// Order already uploaded by this user
-				w.WriteHeader(http.StatusOK)
-				return
-			}
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}

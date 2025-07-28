@@ -45,7 +45,7 @@ func (s *OrderService) SubmitOrder(userID int, orderNumber string) error {
 	err := s.db.QueryRow("SELECT user_id FROM orders WHERE number = $1", orderNumber).Scan(&existingUserID)
 	if err == nil {
 		if existingUserID == userID {
-			return nil // Order already uploaded by this user (200 response)
+			return errors.New("order already uploaded by this user") // Specific error for same user
 		}
 		return errors.New("order already uploaded by another user")
 	} else if err != sql.ErrNoRows {
