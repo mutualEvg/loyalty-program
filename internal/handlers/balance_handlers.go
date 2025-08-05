@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	appErrors "gofemart/internal/errors"
 	"gofemart/internal/middleware"
 	"gofemart/internal/models"
 	"gofemart/internal/services"
@@ -76,7 +77,7 @@ func (h *BalanceHandlers) WithdrawPoints(w http.ResponseWriter, r *http.Request)
 	// Process withdrawal
 	err := h.withdrawalService.WithdrawPoints(claims.UserID, &req)
 	if err != nil {
-		if err.Error() == "insufficient funds" {
+		if err == appErrors.ErrInsufficientFunds {
 			http.Error(w, "Insufficient funds", http.StatusPaymentRequired)
 			return
 		}

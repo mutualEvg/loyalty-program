@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	appErrors "gofemart/internal/errors"
 	"gofemart/internal/middleware"
 	"gofemart/internal/services"
 )
@@ -18,23 +19,11 @@ func NewOrderHandlers(orderService *services.OrderService) *OrderHandlers {
 	return &OrderHandlers{orderService: orderService}
 }
 
-// SubmitOrder handles order number submission
+// SubmitOrder handles order submission
 func (h *OrderHandlers) SubmitOrder(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Get user from context
 	claims, ok := middleware.GetUserFromContext(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Check content type
-	if r.Header.Get("Content-Type") != "text/plain" {
-		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
 
@@ -47,21 +36,20 @@ func (h *OrderHandlers) SubmitOrder(w http.ResponseWriter, r *http.Request) {
 
 	orderNumber := strings.TrimSpace(string(body))
 	if orderNumber == "" {
-		http.Error(w, "Bad request", http.StatusBadRequest)
+		http.Error(w, "Order number is required", http.StatusBadRequest)
 		return
 	}
 
-	// Submit order
 	err = h.orderService.SubmitOrder(claims.UserID, orderNumber)
 	if err != nil {
-		switch err.Error() {
-		case "invalid order number format":
+		switch err {
+		case appErrors.ErrInvalidOrderNumberFormat:
 			http.Error(w, "Invalid order number format", http.StatusUnprocessableEntity)
 			return
-		case "order already uploaded by this user":
+		case appErrors.ErrOrderAlreadyUploadedByUser:
 			w.WriteHeader(http.StatusOK) // 200 - already uploaded by this user
 			return
-		case "order already uploaded by another user":
+		case appErrors.ErrOrderAlreadyUploadedByAnotherUser:
 			http.Error(w, "Order already uploaded by another user", http.StatusConflict)
 			return
 		default:
@@ -70,8 +58,7 @@ func (h *OrderHandlers) SubmitOrder(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// New order accepted
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusAccepted) // 202 - accepted for processing
 }
 
 // GetUserOrders handles retrieving user's orders

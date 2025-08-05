@@ -2,11 +2,11 @@ package services
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
+	appErrors "gofemart/internal/errors"
 	"gofemart/internal/models"
 	"gofemart/internal/repository"
 	"gofemart/internal/utils"
@@ -48,7 +48,7 @@ func (s *OrderService) SetAccrualSystemAddress(addr string) {
 func (s *OrderService) SubmitOrder(userID int, orderNumber string) error {
 	// Validate order number using Luhn algorithm
 	if !utils.IsValidLuhn(orderNumber) {
-		return errors.New("invalid order number format")
+		return appErrors.ErrInvalidOrderNumberFormat
 	}
 
 	// Check if order already exists
@@ -58,9 +58,9 @@ func (s *OrderService) SubmitOrder(userID int, orderNumber string) error {
 	}
 	if existingUserID != 0 {
 		if existingUserID == userID {
-			return errors.New("order already uploaded by this user")
+			return appErrors.ErrOrderAlreadyUploadedByUser
 		}
-		return errors.New("order already uploaded by another user")
+		return appErrors.ErrOrderAlreadyUploadedByAnotherUser
 	}
 
 	// Create new order
