@@ -12,6 +12,14 @@ import (
 	"gofemart/internal/utils"
 )
 
+// Accrual system status constants
+const (
+	AccrualStatusRegistered = "REGISTERED"
+	AccrualStatusProcessing = "PROCESSING"
+	AccrualStatusInvalid    = "INVALID"
+	AccrualStatusProcessed  = "PROCESSED"
+)
+
 type OrderService struct {
 	orderRepo         repository.OrderRepository
 	balanceRepo       repository.BalanceRepository
@@ -126,13 +134,13 @@ func (s *OrderService) queryAccrualSystem(orderNumber string) (float64, models.O
 
 		// Map accrual system statuses to our statuses
 		switch accrualResp.Status {
-		case "REGISTERED":
+		case AccrualStatusRegistered:
 			return 0, models.OrderStatusNew
-		case "PROCESSING":
+		case AccrualStatusProcessing:
 			return 0, models.OrderStatusProcessing
-		case "INVALID":
+		case AccrualStatusInvalid:
 			return 0, models.OrderStatusInvalid
-		case "PROCESSED":
+		case AccrualStatusProcessed:
 			return accrualResp.Accrual, models.OrderStatusProcessed
 		default:
 			return 0, models.OrderStatusProcessing
