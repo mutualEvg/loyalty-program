@@ -1,20 +1,20 @@
 package services
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
-	"gofemart/internal/database"
 	"gofemart/internal/models"
+	"gofemart/internal/repository"
 	"gofemart/internal/utils"
 )
 
 type OrderService struct {
-	db                *database.DB
+	orderRepo         repository.OrderRepository
+	balanceRepo       repository.BalanceRepository
 	accrualSystemAddr string
 }
 
@@ -24,8 +24,11 @@ type AccrualResponse struct {
 	Accrual float64 `json:"accrual,omitempty"`
 }
 
-func NewOrderService(db *database.DB) *OrderService {
-	return &OrderService{db: db}
+func NewOrderService(orderRepo repository.OrderRepository, balanceRepo repository.BalanceRepository) *OrderService {
+	return &OrderService{
+		orderRepo:   orderRepo,
+		balanceRepo: balanceRepo,
+	}
 }
 
 // SetAccrualSystemAddress configures the external accrual system address
@@ -41,24 +44,20 @@ func (s *OrderService) SubmitOrder(userID int, orderNumber string) error {
 	}
 
 	// Check if order already exists
-	var existingUserID int
-	err := s.db.QueryRow("SELECT user_id FROM orders WHERE number = $1", orderNumber).Scan(&existingUserID)
-	if err == nil {
+	existingUserID, err := s.orderRepo.ExistsByNumber(orderNumber)
+	if err != nil {
+		return err
+	}
+	if existingUserID != 0 {
 		if existingUserID == userID {
-			return errors.New("order already uploaded by this user") // Specific error for same user
+			return errors.New("order already uploaded by this user")
 		}
 		return errors.New("order already uploaded by another user")
-	} else if err != sql.ErrNoRows {
-		return fmt.Errorf("failed to check existing order: %w", err)
 	}
 
 	// Create new order
-	_, err = s.db.Exec(`
-		INSERT INTO orders (user_id, number, status, uploaded_at) 
-		VALUES ($1, $2, $3, $4)`,
-		userID, orderNumber, models.OrderStatusNew, time.Now())
-	if err != nil {
-		return fmt.Errorf("failed to create order: %w", err)
+	if err := s.orderRepo.Create(userID, orderNumber, models.OrderStatusNew); err != nil {
+		return err
 	}
 
 	// Start processing order asynchronously
@@ -69,39 +68,13 @@ func (s *OrderService) SubmitOrder(userID int, orderNumber string) error {
 
 // GetUserOrders retrieves all orders for a user
 func (s *OrderService) GetUserOrders(userID int) ([]*models.OrderResponse, error) {
-	rows, err := s.db.Query(`
-		SELECT number, status, accrual, uploaded_at 
-		FROM orders 
-		WHERE user_id = $1 
-		ORDER BY uploaded_at DESC`, userID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user orders: %w", err)
-	}
-	defer rows.Close()
-
-	var orders []*models.OrderResponse
-	for rows.Next() {
-		var order models.OrderResponse
-		err := rows.Scan(&order.Number, &order.Status, &order.Accrual, &order.UploadedAt)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan order: %w", err)
-		}
-		orders = append(orders, &order)
-	}
-
-	// Check for errors during iteration
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate over orders: %w", err)
-	}
-
-	return orders, nil
+	return s.orderRepo.GetByUserID(userID)
 }
 
 // processOrderAsync handles order processing with external accrual system or mock
 func (s *OrderService) processOrderAsync(orderNumber string) {
 	// Update status to PROCESSING
-	s.db.Exec("UPDATE orders SET status = $1, updated_at = $2 WHERE number = $3",
-		models.OrderStatusProcessing, time.Now(), orderNumber)
+	s.orderRepo.UpdateStatus(orderNumber, models.OrderStatusProcessing, nil)
 
 	// Simulate processing time
 	time.Sleep(2 * time.Second)
@@ -120,24 +93,16 @@ func (s *OrderService) processOrderAsync(orderNumber string) {
 	// Update order with result
 	if accrual > 0 {
 		// Update order
-		s.db.Exec(`
-			UPDATE orders 
-			SET status = $1, accrual = $2, updated_at = $3 
-			WHERE number = $4`,
-			status, accrual, time.Now(), orderNumber)
+		s.orderRepo.UpdateStatus(orderNumber, status, &accrual)
 
-		// Update user balance
-		s.db.Exec(`
-			UPDATE user_balances 
-			SET current_balance = current_balance + $1, updated_at = $2 
-			WHERE user_id = (SELECT user_id FROM orders WHERE number = $3)`,
-			accrual, time.Now(), orderNumber)
+		// Get order to find user ID
+		order, err := s.orderRepo.GetByNumber(orderNumber)
+		if err == nil && order != nil {
+			// Update user balance
+			s.balanceRepo.UpdateBalance(order.UserID, accrual)
+		}
 	} else {
-		s.db.Exec(`
-			UPDATE orders 
-			SET status = $1, updated_at = $2 
-			WHERE number = $3`,
-			status, time.Now(), orderNumber)
+		s.orderRepo.UpdateStatus(orderNumber, status, nil)
 	}
 }
 

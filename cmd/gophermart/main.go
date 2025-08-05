@@ -12,6 +12,7 @@ import (
 	"gofemart/internal/database"
 	"gofemart/internal/handlers"
 	"gofemart/internal/middleware"
+	"gofemart/internal/repository/postgres"
 	"gofemart/internal/services"
 )
 
@@ -57,14 +58,20 @@ func main() {
 		log.Fatalf("Failed to create tables: %v", err)
 	}
 
-	// Initialize services
-	userService := services.NewUserService(db)
-	orderService := services.NewOrderService(db)
+	// Initialize repositories
+	userRepo := postgres.NewUserRepository(db)
+	orderRepo := postgres.NewOrderRepository(db)
+	balanceRepo := postgres.NewBalanceRepository(db)
+	withdrawalRepo := postgres.NewWithdrawalRepository(db)
+
+	// Initialize services with repositories
+	userService := services.NewUserService(userRepo, balanceRepo)
+	orderService := services.NewOrderService(orderRepo, balanceRepo)
 	if *accrualSystemAddr != "" {
 		// Use real accrual system if address is provided
 		orderService.SetAccrualSystemAddress(*accrualSystemAddr)
 	}
-	withdrawalService := services.NewWithdrawalService(db)
+	withdrawalService := services.NewWithdrawalService(withdrawalRepo, balanceRepo)
 
 	// Initialize handlers
 	authHandlers := handlers.NewAuthHandlers(userService)
