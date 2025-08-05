@@ -1,8 +1,7 @@
 package services
 
 import (
-	"errors"
-
+	appErrors "gofemart/internal/errors"
 	"gofemart/internal/models"
 	"gofemart/internal/repository"
 )
@@ -25,7 +24,7 @@ func (s *WithdrawalService) WithdrawPoints(userID int, req *models.WithdrawalReq
 	err := s.balanceRepo.Withdraw(userID, req.Sum)
 	if err != nil {
 		if err.Error() == "insufficient funds" {
-			return errors.New("insufficient funds")
+			return appErrors.ErrInsufficientFunds
 		}
 		return err
 	}

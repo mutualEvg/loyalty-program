@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"gofemart/internal/database"
+	appErrors "gofemart/internal/errors"
 	"gofemart/internal/models"
 )
 
@@ -69,14 +70,14 @@ func (r *BalanceRepository) Withdraw(userID int, amount float64) error {
 		userID).Scan(&currentBalance)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("user balance not found")
+			return appErrors.ErrUserBalanceNotFound
 		}
 		return fmt.Errorf("failed to get current balance: %w", err)
 	}
 
 	// Check if user has sufficient balance
 	if currentBalance < amount {
-		return fmt.Errorf("insufficient funds")
+		return appErrors.ErrInsufficientFunds
 	}
 
 	// Update balance

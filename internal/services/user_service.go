@@ -1,8 +1,7 @@
 package services
 
 import (
-	"errors"
-
+	appErrors "gofemart/internal/errors"
 	"gofemart/internal/models"
 	"gofemart/internal/repository"
 	"gofemart/internal/utils"
@@ -28,7 +27,7 @@ func (s *UserService) Register(req *models.RegisterRequest) (*models.User, strin
 		return nil, "", err
 	}
 	if exists {
-		return nil, "", errors.New("login already exists")
+		return nil, "", appErrors.ErrLoginAlreadyExists
 	}
 
 	// Hash password
@@ -64,12 +63,12 @@ func (s *UserService) Login(req *models.LoginRequest) (*models.User, string, err
 		return nil, "", err
 	}
 	if user == nil {
-		return nil, "", errors.New("invalid credentials")
+		return nil, "", appErrors.ErrInvalidCredentials
 	}
 
 	// Check password
 	if !utils.CheckPassword(req.Password, user.PasswordHash) {
-		return nil, "", errors.New("invalid credentials")
+		return nil, "", appErrors.ErrInvalidCredentials
 	}
 
 	// Generate token
