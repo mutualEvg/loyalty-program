@@ -1,13 +1,15 @@
 package postgres
 
 import (
-	"database/sql"
+	"context"
 	"fmt"
 	"time"
 
 	"gofemart/internal/database"
 	appErrors "gofemart/internal/errors"
 	"gofemart/internal/models"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type BalanceRepository struct {
@@ -18,14 +20,14 @@ func NewBalanceRepository(db *database.DB) *BalanceRepository {
 	return &BalanceRepository{db: db}
 }
 
-func (r *BalanceRepository) GetByUserID(userID int) (*models.UserBalance, error) {
+func (r *BalanceRepository) GetByUserID(ctx context.Context, userID int) (*models.UserBalance, error) {
 	var balance models.UserBalance
-	err := r.db.QueryRow(`
+	err := r.db.QueryRow(ctx, `
 		SELECT user_id, current_balance, total_withdrawn 
 		FROM user_balances WHERE user_id = $1`, userID).Scan(
 		&balance.UserID, &balance.Current, &balance.Withdrawn)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if err == pgx.ErrNoRows {
 			return &models.UserBalance{UserID: userID, Current: 0, Withdrawn: 0}, nil
 		}
 		return nil, fmt.Errorf("failed to get balance: %w", err)
@@ -33,8 +35,8 @@ func (r *BalanceRepository) GetByUserID(userID int) (*models.UserBalance, error)
 	return &balance, nil
 }
 
-func (r *BalanceRepository) Create(userID int) error {
-	_, err := r.db.Exec(`
+func (r *BalanceRepository) Create(ctx context.Context, userID int) error {
+	_, err := r.db.Exec(ctx, `
 		INSERT INTO user_balances (user_id, current_balance, total_withdrawn) 
 		VALUES ($1, 0.00, 0.00)`, userID)
 	if err != nil {
@@ -43,8 +45,8 @@ func (r *BalanceRepository) Create(userID int) error {
 	return nil
 }
 
-func (r *BalanceRepository) UpdateBalance(userID int, amount float64) error {
-	_, err := r.db.Exec(`
+func (r *BalanceRepository) UpdateBalance(ctx context.Context, userID int, amount float64) error {
+	_, err := r.db.Exec(ctx, `
 		UPDATE user_balances 
 		SET current_balance = current_balance + $1, updated_at = $2 
 		WHERE user_id = $3`,
@@ -55,21 +57,22 @@ func (r *BalanceRepository) UpdateBalance(userID int, amount float64) error {
 	return nil
 }
 
-func (r *BalanceRepository) Withdraw(userID int, amount float64) error {
+func (r *BalanceRepository) Withdraw(ctx context.Context, userID int, amount float64) error {
+
 	// Start transaction
-	tx, err := r.db.Begin()
+	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to start transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback(ctx)
 
 	// Get current balance
 	var currentBalance float64
-	err = tx.QueryRow(`
+	err = tx.QueryRow(ctx, `
 		SELECT current_balance FROM user_balances WHERE user_id = $1`,
 		userID).Scan(&currentBalance)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if err == pgx.ErrNoRows {
 			return appErrors.ErrUserBalanceNotFound
 		}
 		return fmt.Errorf("failed to get current balance: %w", err)
@@ -81,7 +84,7 @@ func (r *BalanceRepository) Withdraw(userID int, amount float64) error {
 	}
 
 	// Update balance
-	_, err = tx.Exec(`
+	_, err = tx.Exec(ctx, `
 		UPDATE user_balances 
 		SET current_balance = current_balance - $1, 
 		    total_withdrawn = total_withdrawn + $1,
@@ -93,7 +96,7 @@ func (r *BalanceRepository) Withdraw(userID int, amount float64) error {
 	}
 
 	// Commit transaction
-	if err = tx.Commit(); err != nil {
+	if err = tx.Commit(ctx); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 

@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -16,8 +17,8 @@ func NewWithdrawalRepository(db *database.DB) *WithdrawalRepository {
 	return &WithdrawalRepository{db: db}
 }
 
-func (r *WithdrawalRepository) Create(userID int, orderNumber string, sum float64) error {
-	_, err := r.db.Exec(`
+func (r *WithdrawalRepository) Create(ctx context.Context, userID int, orderNumber string, sum float64) error {
+	_, err := r.db.Exec(ctx, `
 		INSERT INTO withdrawals (user_id, order_number, sum, processed_at) 
 		VALUES ($1, $2, $3, $4)`,
 		userID, orderNumber, sum, time.Now())
@@ -27,8 +28,8 @@ func (r *WithdrawalRepository) Create(userID int, orderNumber string, sum float6
 	return nil
 }
 
-func (r *WithdrawalRepository) GetByUserID(userID int) ([]*models.WithdrawalResponse, error) {
-	rows, err := r.db.Query(`
+func (r *WithdrawalRepository) GetByUserID(ctx context.Context, userID int) ([]*models.WithdrawalResponse, error) {
+	rows, err := r.db.Query(ctx, `
 		SELECT order_number, sum, processed_at 
 		FROM withdrawals 
 		WHERE user_id = $1 
