@@ -40,7 +40,7 @@ func (h *OrderHandlers) SubmitOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.orderService.SubmitOrder(claims.UserID, orderNumber)
+	err = h.orderService.SubmitOrder(r.Context(), claims.UserID, orderNumber)
 	if err != nil {
 		switch err {
 		case appErrors.ErrInvalidOrderNumberFormat:
@@ -76,7 +76,7 @@ func (h *OrderHandlers) GetUserOrders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get user orders
-	orders, err := h.orderService.GetUserOrders(claims.UserID)
+	orders, err := h.orderService.GetUserOrders(r.Context(), claims.UserID)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return

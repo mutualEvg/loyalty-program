@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,12 +13,15 @@ import (
 	"gofemart/internal/utils"
 )
 
+// AccrualStatus represents the status of an order in the accrual system
+type AccrualStatus string
+
 // Accrual system status constants
 const (
-	AccrualStatusRegistered = "REGISTERED"
-	AccrualStatusProcessing = "PROCESSING"
-	AccrualStatusInvalid    = "INVALID"
-	AccrualStatusProcessed  = "PROCESSED"
+	AccrualStatusRegistered AccrualStatus = "REGISTERED"
+	AccrualStatusProcessing AccrualStatus = "PROCESSING"
+	AccrualStatusInvalid    AccrualStatus = "INVALID"
+	AccrualStatusProcessed  AccrualStatus = "PROCESSED"
 )
 
 type OrderService struct {
@@ -27,9 +31,9 @@ type OrderService struct {
 }
 
 type AccrualResponse struct {
-	Order   string  `json:"order"`
-	Status  string  `json:"status"`
-	Accrual float64 `json:"accrual,omitempty"`
+	Order   string        `json:"order"`
+	Status  AccrualStatus `json:"status"`
+	Accrual float64       `json:"accrual,omitempty"`
 }
 
 func NewOrderService(orderRepo repository.OrderRepository, balanceRepo repository.BalanceRepository) *OrderService {
@@ -45,14 +49,14 @@ func (s *OrderService) SetAccrualSystemAddress(addr string) {
 }
 
 // SubmitOrder submits a new order for processing
-func (s *OrderService) SubmitOrder(userID int, orderNumber string) error {
+func (s *OrderService) SubmitOrder(ctx context.Context, userID int, orderNumber string) error {
 	// Validate order number using Luhn algorithm
 	if !utils.IsValidLuhn(orderNumber) {
 		return appErrors.ErrInvalidOrderNumberFormat
 	}
 
 	// Check if order already exists
-	existingUserID, err := s.orderRepo.ExistsByNumber(orderNumber)
+	existingUserID, err := s.orderRepo.ExistsByNumber(ctx, orderNumber)
 	if err != nil {
 		return err
 	}
@@ -64,7 +68,7 @@ func (s *OrderService) SubmitOrder(userID int, orderNumber string) error {
 	}
 
 	// Create new order
-	if err := s.orderRepo.Create(userID, orderNumber, models.OrderStatusNew); err != nil {
+	if err := s.orderRepo.Create(ctx, userID, orderNumber, models.OrderStatusNew); err != nil {
 		return err
 	}
 
@@ -75,14 +79,17 @@ func (s *OrderService) SubmitOrder(userID int, orderNumber string) error {
 }
 
 // GetUserOrders retrieves all orders for a user
-func (s *OrderService) GetUserOrders(userID int) ([]*models.OrderResponse, error) {
-	return s.orderRepo.GetByUserID(userID)
+func (s *OrderService) GetUserOrders(ctx context.Context, userID int) ([]*models.OrderResponse, error) {
+	return s.orderRepo.GetByUserID(ctx, userID)
 }
 
 // processOrderAsync handles order processing with external accrual system or mock
 func (s *OrderService) processOrderAsync(orderNumber string) {
+	// Create background context for async processing
+	ctx := context.Background()
+
 	// Update status to PROCESSING
-	s.orderRepo.UpdateStatus(orderNumber, models.OrderStatusProcessing, nil)
+	s.orderRepo.UpdateStatus(ctx, orderNumber, models.OrderStatusProcessing, nil)
 
 	// Simulate processing time
 	time.Sleep(2 * time.Second)
@@ -101,16 +108,16 @@ func (s *OrderService) processOrderAsync(orderNumber string) {
 	// Update order with result
 	if accrual > 0 {
 		// Update order
-		s.orderRepo.UpdateStatus(orderNumber, status, &accrual)
+		s.orderRepo.UpdateStatus(ctx, orderNumber, status, &accrual)
 
 		// Get order to find user ID
-		order, err := s.orderRepo.GetByNumber(orderNumber)
+		order, err := s.orderRepo.GetByNumber(ctx, orderNumber)
 		if err == nil && order != nil {
 			// Update user balance
-			s.balanceRepo.UpdateBalance(order.UserID, accrual)
+			s.balanceRepo.UpdateBalance(ctx, order.UserID, accrual)
 		}
 	} else {
-		s.orderRepo.UpdateStatus(orderNumber, status, nil)
+		s.orderRepo.UpdateStatus(ctx, orderNumber, status, nil)
 	}
 }
 

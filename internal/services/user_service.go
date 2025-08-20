@@ -1,6 +1,8 @@
 package services
 
 import (
+	"context"
+
 	appErrors "gofemart/internal/errors"
 	"gofemart/internal/models"
 	"gofemart/internal/repository"
@@ -20,9 +22,9 @@ func NewUserService(userRepo repository.UserRepository, balanceRepo repository.B
 }
 
 // Register creates a new user account
-func (s *UserService) Register(req *models.RegisterRequest) (*models.User, string, error) {
+func (s *UserService) Register(ctx context.Context, req *models.RegisterRequest) (*models.User, string, error) {
 	// Check if user already exists
-	exists, err := s.userRepo.ExistsByLogin(req.Login)
+	exists, err := s.userRepo.ExistsByLogin(ctx, req.Login)
 	if err != nil {
 		return nil, "", err
 	}
@@ -38,12 +40,12 @@ func (s *UserService) Register(req *models.RegisterRequest) (*models.User, strin
 
 	// Create user
 	user := &models.User{Login: req.Login}
-	if err := s.userRepo.Create(user, hashedPassword); err != nil {
+	if err := s.userRepo.Create(ctx, user, hashedPassword); err != nil {
 		return nil, "", err
 	}
 
 	// Initialize user balance
-	if err := s.balanceRepo.Create(user.ID); err != nil {
+	if err := s.balanceRepo.Create(ctx, user.ID); err != nil {
 		return nil, "", err
 	}
 
@@ -57,8 +59,8 @@ func (s *UserService) Register(req *models.RegisterRequest) (*models.User, strin
 }
 
 // Login authenticates a user
-func (s *UserService) Login(req *models.LoginRequest) (*models.User, string, error) {
-	user, err := s.userRepo.GetByLogin(req.Login)
+func (s *UserService) Login(ctx context.Context, req *models.LoginRequest) (*models.User, string, error) {
+	user, err := s.userRepo.GetByLogin(ctx, req.Login)
 	if err != nil {
 		return nil, "", err
 	}
@@ -81,6 +83,6 @@ func (s *UserService) Login(req *models.LoginRequest) (*models.User, string, err
 }
 
 // GetBalance retrieves user's balance information
-func (s *UserService) GetBalance(userID int) (*models.UserBalance, error) {
-	return s.balanceRepo.GetByUserID(userID)
+func (s *UserService) GetBalance(ctx context.Context, userID int) (*models.UserBalance, error) {
+	return s.balanceRepo.GetByUserID(ctx, userID)
 }

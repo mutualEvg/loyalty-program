@@ -1,12 +1,14 @@
 package postgres
 
 import (
-	"database/sql"
+	"context"
 	"fmt"
 	"time"
 
 	"gofemart/internal/database"
 	"gofemart/internal/models"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type OrderRepository struct {
@@ -17,8 +19,8 @@ func NewOrderRepository(db *database.DB) *OrderRepository {
 	return &OrderRepository{db: db}
 }
 
-func (r *OrderRepository) Create(userID int, orderNumber string, status models.OrderStatus) error {
-	_, err := r.db.Exec(`
+func (r *OrderRepository) Create(ctx context.Context, userID int, orderNumber string, status models.OrderStatus) error {
+	_, err := r.db.Exec(ctx, `
 		INSERT INTO orders (user_id, number, status, uploaded_at) 
 		VALUES ($1, $2, $3, $4)`,
 		userID, orderNumber, status, time.Now())
@@ -28,15 +30,15 @@ func (r *OrderRepository) Create(userID int, orderNumber string, status models.O
 	return nil
 }
 
-func (r *OrderRepository) GetByNumber(orderNumber string) (*models.Order, error) {
+func (r *OrderRepository) GetByNumber(ctx context.Context, orderNumber string) (*models.Order, error) {
 	var order models.Order
-	err := r.db.QueryRow(`
+	err := r.db.QueryRow(ctx, `
 		SELECT id, user_id, number, status, accrual, uploaded_at, updated_at 
 		FROM orders WHERE number = $1`, orderNumber).Scan(
 		&order.ID, &order.UserID, &order.Number, &order.Status,
 		&order.Accrual, &order.UploadedAt, &order.UpdatedAt)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if err == pgx.ErrNoRows {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get order: %w", err)
@@ -44,8 +46,8 @@ func (r *OrderRepository) GetByNumber(orderNumber string) (*models.Order, error)
 	return &order, nil
 }
 
-func (r *OrderRepository) GetByUserID(userID int) ([]*models.OrderResponse, error) {
-	rows, err := r.db.Query(`
+func (r *OrderRepository) GetByUserID(ctx context.Context, userID int) ([]*models.OrderResponse, error) {
+	rows, err := r.db.Query(ctx, `
 		SELECT number, status, accrual, uploaded_at 
 		FROM orders 
 		WHERE user_id = $1 
@@ -73,16 +75,16 @@ func (r *OrderRepository) GetByUserID(userID int) ([]*models.OrderResponse, erro
 	return orders, nil
 }
 
-func (r *OrderRepository) UpdateStatus(orderNumber string, status models.OrderStatus, accrual *float64) error {
+func (r *OrderRepository) UpdateStatus(ctx context.Context, orderNumber string, status models.OrderStatus, accrual *float64) error {
 	if accrual != nil {
-		_, err := r.db.Exec(`
+		_, err := r.db.Exec(ctx, `
 			UPDATE orders 
 			SET status = $1, accrual = $2, updated_at = $3 
 			WHERE number = $4`,
 			status, *accrual, time.Now(), orderNumber)
 		return err
 	} else {
-		_, err := r.db.Exec(`
+		_, err := r.db.Exec(ctx, `
 			UPDATE orders 
 			SET status = $1, updated_at = $2 
 			WHERE number = $3`,
@@ -91,11 +93,11 @@ func (r *OrderRepository) UpdateStatus(orderNumber string, status models.OrderSt
 	}
 }
 
-func (r *OrderRepository) ExistsByNumber(orderNumber string) (int, error) {
+func (r *OrderRepository) ExistsByNumber(ctx context.Context, orderNumber string) (int, error) {
 	var userID int
-	err := r.db.QueryRow("SELECT user_id FROM orders WHERE number = $1", orderNumber).Scan(&userID)
+	err := r.db.QueryRow(ctx, "SELECT user_id FROM orders WHERE number = $1", orderNumber).Scan(&userID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if err == pgx.ErrNoRows {
 			return 0, nil // Order doesn't exist
 		}
 		return 0, fmt.Errorf("failed to check existing order: %w", err)
