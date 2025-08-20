@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"gofemart/internal/database"
 	"gofemart/internal/handlers"
 	"gofemart/internal/middleware"
+	"gofemart/internal/repository/postgres"
 	"gofemart/internal/services"
 )
 
@@ -20,12 +22,32 @@ func main() {
 		log.Println("No .env file found, using system environment variables")
 	}
 
-	// Get configuration from environment
-	databaseURL := getEnv("DATABASE_URL", "postgres://user:password@localhost/gofemart?sslmode=disable")
-	serverAddr := getEnv("SERVER_ADDRESS", ":8080")
+	// Configuration flags
+	var (
+		runAddress        = flag.String("a", ":8080", "server run address")
+		databaseURI       = flag.String("d", "", "database connection URI")
+		accrualSystemAddr = flag.String("r", "", "accrual system address")
+	)
+	flag.Parse()
+
+	// Environment variables override flags
+	if addr := os.Getenv("RUN_ADDRESS"); addr != "" {
+		*runAddress = addr
+	}
+	if dbURI := os.Getenv("DATABASE_URI"); dbURI != "" {
+		*databaseURI = dbURI
+	}
+	if accrualAddr := os.Getenv("ACCRUAL_SYSTEM_ADDRESS"); accrualAddr != "" {
+		*accrualSystemAddr = accrualAddr
+	}
+
+	// Default database URI if not provided
+	if *databaseURI == "" {
+		*databaseURI = "postgres://ar11@localhost:5432/gofemart?sslmode=disable"
+	}
 
 	// Initialize database
-	db, err := database.NewConnection(databaseURL)
+	db, err := database.NewConnection(*databaseURI)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -36,10 +58,20 @@ func main() {
 		log.Fatalf("Failed to create tables: %v", err)
 	}
 
-	// Initialize services
-	userService := services.NewUserService(db)
-	orderService := services.NewOrderService(db)
-	withdrawalService := services.NewWithdrawalService(db)
+	// Initialize repositories
+	userRepo := postgres.NewUserRepository(db)
+	orderRepo := postgres.NewOrderRepository(db)
+	balanceRepo := postgres.NewBalanceRepository(db)
+	withdrawalRepo := postgres.NewWithdrawalRepository(db)
+
+	// Initialize services with repositories
+	userService := services.NewUserService(userRepo, balanceRepo)
+	orderService := services.NewOrderService(orderRepo, balanceRepo)
+	if *accrualSystemAddr != "" {
+		// Use real accrual system if address is provided
+		orderService.SetAccrualSystemAddress(*accrualSystemAddr)
+	}
+	withdrawalService := services.NewWithdrawalService(withdrawalRepo, balanceRepo)
 
 	// Initialize handlers
 	authHandlers := handlers.NewAuthHandlers(userService)
@@ -69,8 +101,11 @@ func main() {
 	// Add logging middleware
 	router.Use(loggingMiddleware)
 
-	log.Printf("Starting Gufermart Loyalty System on %s", serverAddr)
-	log.Printf("Database URL: %s", databaseURL)
+	log.Printf("Starting Gufermart Loyalty System on %s", *runAddress)
+	log.Printf("Database URI: %s", *databaseURI)
+	if *accrualSystemAddr != "" {
+		log.Printf("Accrual System Address: %s", *accrualSystemAddr)
+	}
 	log.Println("Available endpoints:")
 	log.Println("  POST /api/user/register - User registration")
 	log.Println("  POST /api/user/login - User authentication")
@@ -80,14 +115,7 @@ func main() {
 	log.Println("  POST /api/user/balance/withdraw - Withdraw points")
 	log.Println("  GET  /api/user/withdrawals - Get withdrawal history")
 
-	log.Fatal(http.ListenAndServe(serverAddr, router))
-}
-
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
+	log.Fatal(http.ListenAndServe(*runAddress, router))
 }
 
 // loggingMiddleware logs HTTP requests

@@ -1,116 +1,170 @@
 package services
 
 import (
-	"database/sql"
-	"errors"
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
-	"gofemart/internal/database"
+	appErrors "gofemart/internal/errors"
 	"gofemart/internal/models"
+	"gofemart/internal/repository"
 	"gofemart/internal/utils"
 )
 
+// AccrualStatus represents the status of an order in the accrual system
+type AccrualStatus string
+
+// Accrual system status constants
+const (
+	AccrualStatusRegistered AccrualStatus = "REGISTERED"
+	AccrualStatusProcessing AccrualStatus = "PROCESSING"
+	AccrualStatusInvalid    AccrualStatus = "INVALID"
+	AccrualStatusProcessed  AccrualStatus = "PROCESSED"
+)
+
 type OrderService struct {
-	db *database.DB
+	orderRepo         repository.OrderRepository
+	balanceRepo       repository.BalanceRepository
+	accrualSystemAddr string
 }
 
-func NewOrderService(db *database.DB) *OrderService {
-	return &OrderService{db: db}
+type AccrualResponse struct {
+	Order   string        `json:"order"`
+	Status  AccrualStatus `json:"status"`
+	Accrual float64       `json:"accrual,omitempty"`
+}
+
+func NewOrderService(orderRepo repository.OrderRepository, balanceRepo repository.BalanceRepository) *OrderService {
+	return &OrderService{
+		orderRepo:   orderRepo,
+		balanceRepo: balanceRepo,
+	}
+}
+
+// SetAccrualSystemAddress configures the external accrual system address
+func (s *OrderService) SetAccrualSystemAddress(addr string) {
+	s.accrualSystemAddr = addr
 }
 
 // SubmitOrder submits a new order for processing
-func (s *OrderService) SubmitOrder(userID int, orderNumber string) error {
+func (s *OrderService) SubmitOrder(ctx context.Context, userID int, orderNumber string) error {
 	// Validate order number using Luhn algorithm
 	if !utils.IsValidLuhn(orderNumber) {
-		return errors.New("invalid order number format")
+		return appErrors.ErrInvalidOrderNumberFormat
 	}
 
 	// Check if order already exists
-	var existingUserID int
-	err := s.db.QueryRow("SELECT user_id FROM orders WHERE number = $1", orderNumber).Scan(&existingUserID)
-	if err == nil {
+	existingUserID, err := s.orderRepo.ExistsByNumber(ctx, orderNumber)
+	if err != nil {
+		return err
+	}
+	if existingUserID != 0 {
 		if existingUserID == userID {
-			return nil // Order already uploaded by this user (200 response)
+			return appErrors.ErrOrderAlreadyUploadedByUser
 		}
-		return errors.New("order already uploaded by another user")
-	} else if err != sql.ErrNoRows {
-		return fmt.Errorf("failed to check existing order: %w", err)
+		return appErrors.ErrOrderAlreadyUploadedByAnotherUser
 	}
 
 	// Create new order
-	_, err = s.db.Exec(`
-		INSERT INTO orders (user_id, number, status, uploaded_at) 
-		VALUES ($1, $2, $3, $4)`,
-		userID, orderNumber, models.OrderStatusNew, time.Now())
-	if err != nil {
-		return fmt.Errorf("failed to create order: %w", err)
+	if err := s.orderRepo.Create(ctx, userID, orderNumber, models.OrderStatusNew); err != nil {
+		return err
 	}
 
-	// Start processing order asynchronously (simulate external service call)
+	// Start processing order asynchronously
 	go s.processOrderAsync(orderNumber)
 
 	return nil
 }
 
 // GetUserOrders retrieves all orders for a user
-func (s *OrderService) GetUserOrders(userID int) ([]*models.OrderResponse, error) {
-	rows, err := s.db.Query(`
-		SELECT number, status, accrual, uploaded_at 
-		FROM orders 
-		WHERE user_id = $1 
-		ORDER BY uploaded_at DESC`, userID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user orders: %w", err)
-	}
-	defer rows.Close()
-
-	var orders []*models.OrderResponse
-	for rows.Next() {
-		var order models.OrderResponse
-		err := rows.Scan(&order.Number, &order.Status, &order.Accrual, &order.UploadedAt)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan order: %w", err)
-		}
-		orders = append(orders, &order)
-	}
-
-	return orders, nil
+func (s *OrderService) GetUserOrders(ctx context.Context, userID int) ([]*models.OrderResponse, error) {
+	return s.orderRepo.GetByUserID(ctx, userID)
 }
 
-// processOrderAsync simulates external loyalty system processing
+// processOrderAsync handles order processing with external accrual system or mock
 func (s *OrderService) processOrderAsync(orderNumber string) {
+	// Create background context for async processing
+	ctx := context.Background()
+
 	// Update status to PROCESSING
-	s.db.Exec("UPDATE orders SET status = $1, updated_at = $2 WHERE number = $3",
-		models.OrderStatusProcessing, time.Now(), orderNumber)
+	s.orderRepo.UpdateStatus(ctx, orderNumber, models.OrderStatusProcessing, nil)
 
 	// Simulate processing time
 	time.Sleep(2 * time.Second)
 
-	// Simulate loyalty calculation result (mock external service)
-	accrual, status := s.simulateLoyaltyCalculation(orderNumber)
+	var accrual float64
+	var status models.OrderStatus
+
+	if s.accrualSystemAddr != "" {
+		// Use real accrual system
+		accrual, status = s.queryAccrualSystem(orderNumber)
+	} else {
+		// Use mock implementation
+		accrual, status = s.simulateLoyaltyCalculation(orderNumber)
+	}
 
 	// Update order with result
 	if accrual > 0 {
 		// Update order
-		s.db.Exec(`
-			UPDATE orders 
-			SET status = $1, accrual = $2, updated_at = $3 
-			WHERE number = $4`,
-			status, accrual, time.Now(), orderNumber)
+		s.orderRepo.UpdateStatus(ctx, orderNumber, status, &accrual)
 
-		// Update user balance
-		s.db.Exec(`
-			UPDATE user_balances 
-			SET current_balance = current_balance + $1, updated_at = $2 
-			WHERE user_id = (SELECT user_id FROM orders WHERE number = $3)`,
-			accrual, time.Now(), orderNumber)
+		// Get order to find user ID
+		order, err := s.orderRepo.GetByNumber(ctx, orderNumber)
+		if err == nil && order != nil {
+			// Update user balance
+			s.balanceRepo.UpdateBalance(ctx, order.UserID, accrual)
+		}
 	} else {
-		s.db.Exec(`
-			UPDATE orders 
-			SET status = $1, updated_at = $2 
-			WHERE number = $3`,
-			status, time.Now(), orderNumber)
+		s.orderRepo.UpdateStatus(ctx, orderNumber, status, nil)
+	}
+}
+
+// queryAccrualSystem queries the external accrual system
+func (s *OrderService) queryAccrualSystem(orderNumber string) (float64, models.OrderStatus) {
+	url := fmt.Sprintf("%s/api/orders/%s", s.accrualSystemAddr, orderNumber)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		// If accrual system is unavailable, mark as processing
+		return 0, models.OrderStatusProcessing
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var accrualResp AccrualResponse
+		if err := json.NewDecoder(resp.Body).Decode(&accrualResp); err != nil {
+			return 0, models.OrderStatusProcessing
+		}
+
+		// Map accrual system statuses to our statuses
+		switch accrualResp.Status {
+		case AccrualStatusRegistered:
+			return 0, models.OrderStatusNew
+		case AccrualStatusProcessing:
+			return 0, models.OrderStatusProcessing
+		case AccrualStatusInvalid:
+			return 0, models.OrderStatusInvalid
+		case AccrualStatusProcessed:
+			return accrualResp.Accrual, models.OrderStatusProcessed
+		default:
+			return 0, models.OrderStatusProcessing
+		}
+
+	case http.StatusNoContent:
+		// Order not registered in accrual system, mark as invalid
+		return 0, models.OrderStatusInvalid
+
+	case http.StatusTooManyRequests:
+		// Rate limited, retry later
+		time.Sleep(60 * time.Second)
+		return s.queryAccrualSystem(orderNumber)
+
+	default:
+		// Unknown error, keep processing
+		return 0, models.OrderStatusProcessing
 	}
 }
 

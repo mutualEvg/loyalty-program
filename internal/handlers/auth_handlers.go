@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	appErrors "gofemart/internal/errors"
 	"gofemart/internal/models"
 	"gofemart/internal/services"
 )
@@ -35,9 +36,9 @@ func (h *AuthHandlers) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, token, err := h.userService.Register(&req)
+	user, token, err := h.userService.Register(r.Context(), &req)
 	if err != nil {
-		if err.Error() == "login already exists" {
+		if err == appErrors.ErrLoginAlreadyExists {
 			http.Error(w, "Login already taken", http.StatusConflict)
 			return
 		}
@@ -80,9 +81,9 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, token, err := h.userService.Login(&req)
+	user, token, err := h.userService.Login(r.Context(), &req)
 	if err != nil {
-		if err.Error() == "invalid credentials" {
+		if err == appErrors.ErrInvalidCredentials {
 			http.Error(w, "Invalid login/password", http.StatusUnauthorized)
 			return
 		}

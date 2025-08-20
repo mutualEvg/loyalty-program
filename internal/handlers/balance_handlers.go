@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	appErrors "gofemart/internal/errors"
 	"gofemart/internal/middleware"
 	"gofemart/internal/models"
 	"gofemart/internal/services"
@@ -36,7 +37,7 @@ func (h *BalanceHandlers) GetBalance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get user balance
-	balance, err := h.userService.GetBalance(claims.UserID)
+	balance, err := h.userService.GetBalance(r.Context(), claims.UserID)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -74,9 +75,9 @@ func (h *BalanceHandlers) WithdrawPoints(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Process withdrawal
-	err := h.withdrawalService.WithdrawPoints(claims.UserID, &req)
+	err := h.withdrawalService.WithdrawPoints(r.Context(), claims.UserID, &req)
 	if err != nil {
-		if err.Error() == "insufficient funds" {
+		if err == appErrors.ErrInsufficientFunds {
 			http.Error(w, "Insufficient funds", http.StatusPaymentRequired)
 			return
 		}
@@ -102,7 +103,7 @@ func (h *BalanceHandlers) GetWithdrawals(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Get user withdrawals
-	withdrawals, err := h.withdrawalService.GetUserWithdrawals(claims.UserID)
+	withdrawals, err := h.withdrawalService.GetUserWithdrawals(r.Context(), claims.UserID)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return

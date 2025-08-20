@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	appErrors "gofemart/internal/errors"
 	"gofemart/internal/middleware"
 	"gofemart/internal/services"
 )
@@ -18,23 +19,11 @@ func NewOrderHandlers(orderService *services.OrderService) *OrderHandlers {
 	return &OrderHandlers{orderService: orderService}
 }
 
-// SubmitOrder handles order number submission
+// SubmitOrder handles order submission
 func (h *OrderHandlers) SubmitOrder(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Get user from context
 	claims, ok := middleware.GetUserFromContext(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Check content type
-	if r.Header.Get("Content-Type") != "text/plain" {
-		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
 
@@ -47,33 +36,29 @@ func (h *OrderHandlers) SubmitOrder(w http.ResponseWriter, r *http.Request) {
 
 	orderNumber := strings.TrimSpace(string(body))
 	if orderNumber == "" {
-		http.Error(w, "Bad request", http.StatusBadRequest)
+		http.Error(w, "Order number is required", http.StatusBadRequest)
 		return
 	}
 
-	// Submit order
-	err = h.orderService.SubmitOrder(claims.UserID, orderNumber)
+	err = h.orderService.SubmitOrder(r.Context(), claims.UserID, orderNumber)
 	if err != nil {
-		switch err.Error() {
-		case "invalid order number format":
+		switch err {
+		case appErrors.ErrInvalidOrderNumberFormat:
 			http.Error(w, "Invalid order number format", http.StatusUnprocessableEntity)
 			return
-		case "order already uploaded by another user":
+		case appErrors.ErrOrderAlreadyUploadedByUser:
+			w.WriteHeader(http.StatusOK) // 200 - already uploaded by this user
+			return
+		case appErrors.ErrOrderAlreadyUploadedByAnotherUser:
 			http.Error(w, "Order already uploaded by another user", http.StatusConflict)
 			return
 		default:
-			if err.Error() == "" {
-				// Order already uploaded by this user
-				w.WriteHeader(http.StatusOK)
-				return
-			}
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 	}
 
-	// New order accepted
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusAccepted) // 202 - accepted for processing
 }
 
 // GetUserOrders handles retrieving user's orders
@@ -91,7 +76,7 @@ func (h *OrderHandlers) GetUserOrders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get user orders
-	orders, err := h.orderService.GetUserOrders(claims.UserID)
+	orders, err := h.orderService.GetUserOrders(r.Context(), claims.UserID)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
